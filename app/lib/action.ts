@@ -6,6 +6,9 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { signIn } from '@/auth';
 import { AuthError } from 'next-auth';
+import { log } from "console";
+const { v4: uuidv4 } = require('uuid');
+const bcrypt = require('bcrypt');
 
 const FormSchema = z.object({
   id: z.string(),
@@ -19,6 +22,13 @@ const FormSchema = z.object({
     invalid_type_error: "Please select an invoice status.",
   }),
   date: z.string(),
+  email: z.string(),
+  password: z.string(),
+});
+
+const FormSchemaUser = z.object({
+  email: z.string(),
+  password: z.string(),
 });
 
 const CreateInvoice = FormSchema.omit({ id: true, date: true });
@@ -28,10 +38,19 @@ export type State = {
     customerId?: string[];
     amount?: string[];
     status?: string[];
+    email?: string[];
+    password?: string[];
   };
   message?: string | null;
 };
 
+export type StateUser = {
+  errors?: {
+    email?: string[];
+    password?: string[];
+  };
+  message?: string | null;
+};
 export async function createInvoice(prevState: State, formData: FormData) {
   // Validate form using Zod
   const validatedFields = CreateInvoice.safeParse({
@@ -140,4 +159,45 @@ export async function authenticate(
     }
     throw error;
   }
+}
+
+export async function createUser(prevState: StateUser, formData: FormData) {
+   // Validate form using Zod
+   const validatedFields = FormSchemaUser.safeParse({
+    email: formData.get("email"),
+    password: formData.get("password"),
+  });
+
+  // If form validation fails, return errors early. Otherwise, continue.
+  if (!validatedFields.success) {
+    console.log(validatedFields);
+    
+    return {
+      errors: validatedFields.error.flatten().fieldErrors,
+      message: "Missing Fields. Failed to Create User.",
+    };
+  }
+  console.log(validatedFields);
+
+  // Prepare data for insertion into the database
+  const { email, password } = validatedFields.data;
+  const uuid = uuidv4();
+  const hashedPassword = await bcrypt.hash(password, 10);
+  // Insert data into the database
+  try {
+    await sql`
+      INSERT INTO users (id, name, email, password)
+      VALUES (${uuid}, ${"Jane Doe"}, ${email}, ${hashedPassword})
+    `;
+  } catch (error) {
+    log(error)
+    // If a database error occurs, return a more specific error.
+    return {
+      message: "Database Error: Failed to Create Users.",
+    };
+  }
+
+  // Revalidate the cache for the invoices page and redirect the user.
+  revalidatePath("/login");
+  redirect("/login");
 }
